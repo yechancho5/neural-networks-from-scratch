@@ -137,28 +137,38 @@ class Activation_Softmax_Loss_CategoricalCrossentropy():
 
 class Optimizer_SGD: 
     # Initialize with a default learning rate of 1
-    def __init__(self, learning_rate=1.0):
+    def __init__(self, learning_rate=1.0, decay=0):
         self.learning_rate = learning_rate
+        self.current_learning_rate = learning_rate
+        self.decay = decay
+        self.iterations = 0
+
+    def pre_update_params(self):
+        if self.decay:
+            self.current_learning_rate = self.learning_rate * (1. / (1. + self.decay * self.iterations))
     
     def update_params(self, layer):
-        layer.weights += -self.learning_rate * layer.dweights # W = W - learning rate * gradient of loss w.r.t. weights
-        layer.biases += -self.learning_rate * layer.dbiases # B = B - learning rate * gradient of loss w.r.t. biases
+        layer.weights += -self.current_learning_rate * layer.dweights # W = W - learning rate * gradient of loss w.r.t. weights
+        layer.biases += -self.current_learning_rate * layer.dbiases # B = B - learning rate * gradient of loss w.r.t. biases
+    
+    def post_update_params(self):
+        self.iterations += 1
 
 X, y = spiral_data(samples=100, classes=3) # Create dataset in the 2D plane (100 samples, 2 features)
 
-# Create dense layer with 2 input features and 3 output values
-dense1 = Layer_Dense(2, 3)
+# Create dense layer with 2 input features and 64 output values
+dense1 = Layer_Dense(2, 64)
 
 activation1 = Activation_ReLU()
 
-# Second "hidden" layer
-dense2 = Layer_Dense(3, 3)
+# Second "hidden" layer with 64 input features and 3 output values
+dense2 = Layer_Dense(64, 3)
 
 # Create Softmax classifier's combined loss and activation
 loss_activation = Activation_Softmax_Loss_CategoricalCrossentropy()
 
 # Create optimizer
-optimizer = Optimizer_SGD()
+optimizer = Optimizer_SGD(decay=1e-3)
 
 for epoch in range(10001):
     # Perform a forward pass of training data through this layer
@@ -178,7 +188,7 @@ for epoch in range(10001):
     accuracy = np.mean(predictions==y) # returns an array of Boolean values and converts them to True = 1, False = 0 then takes mean
 
     if (epoch % 100 == 0):
-        print(f'epoch: {epoch}', f'acc: {accuracy:.3f}', f'loss: {loss:.3f}')
+        print(f'epoch: {epoch}, acc: {accuracy:.3f}, loss: {loss:.3f}, lr: {optimizer.current_learning_rate}')
 
     # dvalues = gradient of the loss w.r.t. dense2 logits i.e. softmax outputs
     loss_activation.backward(loss_activation.output, y)
@@ -189,5 +199,7 @@ for epoch in range(10001):
     # dvalues = gradient of loss w.r.t. dense1 outputs
     dense1.backward(activation1.dinputs)
 
+    optimizer.pre_update_params()
     optimizer.update_params(dense1)
     optimizer.update_params(dense2)
+    optimizer.post_update_params()
