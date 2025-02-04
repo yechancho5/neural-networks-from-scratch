@@ -17,14 +17,16 @@ class Layer_Dense:
 
     def backward(self, dvalues):
         # Gradients on parameters
-        self.dweights = np.dot(self.inputs.T, dvalues) # w.r.t. weights, transpose inputs to match weights array
+        # w.r.t. weights, transpose inputs to match weights array
+        self.dweights = np.dot(self.inputs.T, dvalues)
         
         # w.r.t. biases, sum gradient for each input example 
         # partial derivative with respect to bias is always 1 * previous gradients
         self.dbiases = np.sum(dvalues, axis=0, keepdims=True)
         
-        # Gradient on values
-        self.dinputs = np.dot(dvalues, self.weights.T) # w.r.t. inputs, transpose weights to match inputs array
+        # Gradient on values, backpropagated to next layer
+        # w.r.t. inputs, transpose weights to match inputs array 
+        self.dinputs = np.dot(dvalues, self.weights.T) 
         
 class Activation_ReLU: # f(x) = max(x, 0)
     # Forward pass
@@ -33,6 +35,7 @@ class Activation_ReLU: # f(x) = max(x, 0)
         self.output = np.maximum(0, inputs)
     # Backward pass
     def backward(self, dvalues):
+        #dvalues is dense2.inputs, the gradient of the loss (prev. layer) w.r.t. the outputs of the ReLU function
         self.dinputs = dvalues.copy()
         # Zero gradient where input values are negative
         self.dinputs[self.inputs <= 0] = 0
@@ -130,8 +133,16 @@ class Activation_Softmax_Loss_CategoricalCrossentropy():
         # Calculate gradient
         self.dinputs[range(samples), y_true] -= 1
         # Normalize
-        self.dinputs = self.dinputs / samples
+        self.dinputs = self.dinputs / samples # now holds the gradient of the loss w.r.t. the logits of dense2
 
+class Optimizer_SGD: 
+    # Initialize with a default learning rate of 1
+    def __init__(self, learning_rate=1.0):
+        self.learning_rate = learning_rate
+    
+    def update_params(self, layer):
+        layer.weights += -self.learning_rate * layer.dweights # W = W - learning rate * gradient of loss w.r.t. weights
+        layer.biases += -self.learning_rate * layer.dbiases # B = B - learning rate * gradient of loss w.r.t. biases
 
 X, y = spiral_data(samples=100, classes=3) # Create dataset in the 2D plane (100 samples, 2 features)
 
@@ -146,35 +157,37 @@ dense2 = Layer_Dense(3, 3)
 # Create Softmax classifier's combined loss and activation
 loss_activation = Activation_Softmax_Loss_CategoricalCrossentropy()
 
-# Perform a forward pass of training data through this layer
-dense1.forward(X)
+# Create optimizer
+optimizer = Optimizer_SGD()
 
-activation1.forward(dense1.output) # Make a forward pass through the activation function 
+for epoch in range(10001):
+    # Perform a forward pass of training data through this layer
+    dense1.forward(X)
 
-# Makes a forward pass through second Dense layer
-dense2.forward(activation1.output)
+    activation1.forward(dense1.output) # Make a forward pass through the activation function 
 
-loss = loss_activation.forward(dense2.output, y)
+    # Makes a forward pass through second Dense layer
+    dense2.forward(activation1.output)
 
-print(loss_activation.output[:5])
+    loss = loss_activation.forward(dense2.output, y)
 
-print ('loss:', loss)
+    # Calculate accuracy from output of activation2 and targets along the first axis (row)
+    predictions = np.argmax(loss_activation.output,axis=1)
+    if len(y.shape) == 2:
+        y = np.argmax(y, axis=1) 
+    accuracy = np.mean(predictions==y) # returns an array of Boolean values and converts them to True = 1, False = 0 then takes mean
 
-# Calculate accuracy from output of activation2 and targets along the first axis (row)
-predictions = np.argmax(loss_activation.output,axis=1)
-if len(y.shape) == 2:
-    y = np.argmax(y, axis=1) 
-accuracy = np.mean(predictions==y) # returns an array of Boolean values and converts them to True = 1, False = 0 then takes mean
+    if (epoch % 100 == 0):
+        print(f'epoch: {epoch}', f'acc: {accuracy:.3f}', f'loss: {loss:.3f}')
 
-print('acc:', accuracy)
+    # dvalues = gradient of the loss w.r.t. dense2 logits i.e. softmax outputs
+    loss_activation.backward(loss_activation.output, y)
+    # dvalues = gradient of loss w.r.t. dense2 outputs
+    dense2.backward(loss_activation.dinputs)
+    # dvalues = gradient of loss w.r.t. ReLU outputs
+    activation1.backward(dense2.dinputs)
+    # dvalues = gradient of loss w.r.t. dense1 outputs
+    dense1.backward(activation1.dinputs)
 
-loss_activation.backward(loss_activation.output, y)
-dense2.backward(loss_activation.dinputs)
-activation1.backward(dense2.dinputs)
-dense1.backward(activation1.dinputs)
-
-# Print gradients
-print(dense1.dweights)
-print(dense1.dbiases)
-print(dense2.dweights)
-print(dense2.dbiases)
+    optimizer.update_params(dense1)
+    optimizer.update_params(dense2)
