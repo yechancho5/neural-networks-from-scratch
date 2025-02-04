@@ -274,12 +274,31 @@ class Optimizer_Adam:
     def post_update_params(self):
         self.iterations += 1
 
+class Layer_Dropout:
+    def __init__(self, rate):
+        # Store rate, invert it
+        self.rate = 1 - rate
+    
+    def forward(self, inputs):
+        # Save input values
+        self.inputs = inputs
+        # Generate and save scaled mask
+        self.binary_mask = np.random.binomial(1, self.rate, size=inputs.shape) / self.rate
+        # Apply mask
+        self.output = inputs * self.binary_mask
+
+    def backward(self, dvalues):
+        # Gradient on values
+        self.dinputs = dvalues * self.binary_mask
+
 X, y = spiral_data(samples=1000, classes=3) # Create dataset in the 2D plane (100 samples, 2 features)
 
 # Create dense layer with 2 input features and 512 output values
 dense1 = Layer_Dense(2, 512, bias_regularizer_L2=5e-4, weight_regularizer_L2=5e-4)
 
 activation1 = Activation_ReLU()
+
+dropout1 = Layer_Dropout(0.1)
 
 # Second "hidden" layer with 512 input features and 3 output values
 dense2 = Layer_Dense(512, 3)
@@ -288,7 +307,7 @@ dense2 = Layer_Dense(512, 3)
 loss_activation = Activation_Softmax_Loss_CategoricalCrossentropy()
 
 # Create optimizer
-optimizer = Optimizer_Adam(learning_rate=0.02, decay=5e-7)
+optimizer = Optimizer_Adam(learning_rate=0.05, decay=5e-5)
 
 for epoch in range(10001):
     # Perform a forward pass of training data through this layer
@@ -296,8 +315,10 @@ for epoch in range(10001):
 
     activation1.forward(dense1.output) # Make a forward pass through the activation function 
 
+    dropout1.forward(activation1.output)
+
     # Makes a forward pass through second Dense layer
-    dense2.forward(activation1.output)
+    dense2.forward(dropout1.output)
 
     data_loss = loss_activation.forward(dense2.output, y)
 
@@ -318,8 +339,9 @@ for epoch in range(10001):
     loss_activation.backward(loss_activation.output, y)
     # dvalues = gradient of loss w.r.t. dense2 outputs
     dense2.backward(loss_activation.dinputs)
+    dropout1.backward(dense2.dinputs)
     # dvalues = gradient of loss w.r.t. ReLU outputs
-    activation1.backward(dense2.dinputs)
+    activation1.backward(dropout1.dinputs)
     # dvalues = gradient of loss w.r.t. dense1 outputs
     dense1.backward(activation1.dinputs)
 
