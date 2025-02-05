@@ -65,27 +65,6 @@ class Activation_ReLU: # f(x) = max(x, 0)
         # Zero gradient where input values are negative
         self.dinputs[self.inputs <= 0] = 0
 
-class Activation_Softmax: 
-    def forward(self, inputs):
-        # Get unormalized probabilities
-        exp_values=np.exp(inputs - np.max(inputs, axis=1, keepdims=True))
-        # Divide 
-        probabilities = exp_values / np.sum(exp_values, axis=1, keepdims=True)
-
-        self.output = probabilities
-    
-    def backward(self, dvalues):
-        # Create uninitialized array
-        self.dinputs = np.empty_like(dvalues)
-
-        # Enumerate outputs and gradients
-        for index, (single_output, single_dvalues) in enumerate(zip(self.output, dvalues)):
-            single_output = single_output.reshape(-1, 1)
-            # Calculate Jacobian matrix
-            jacobian_matrix = np.diagflat(single_output) - np.dot(single_output, single_output.T)
-            # Calculate sample-wise gradient and add it to the array of sample gradients
-            self.dinputs[index] = np.dot(jacobian_matrix, single_dvalues)                                                                
-
 class Activation_Sigmoid:
     def forward(self, inputs):
         self.inputs = inputs
@@ -128,42 +107,6 @@ class Loss:
 
         return regularization_loss
 
-
-class Loss_CategoricalCrossentropy(Loss):
-    def forward(self, y_pred, y_true):
-
-        samples = len(y_pred)
-
-        # Clip data to prevent division by 0
-        # Clip both sides to not drag mean towards any value
-        y_pred_clipped = np.clip(y_pred, 1e-7, 1 - 1e-7)
-
-        # Probabilities for target values
-        if len(y_true.shape) == 1:
-            correct_confidences = y_pred_clipped[range(samples), y_true]
-
-        # Mask values - for lists of lists
-        elif len(y_true.shape) == 2:
-            # possible because one-hot encoded lists are ex) [0, 0, 1], so multiplying by 1 cancels out
-            correct_confidences = np.sum(y_pred_clipped * y_true, axis=1) 
-
-        # Losses
-        negative_log_likelihoods = -np.log(correct_confidences)
-        return negative_log_likelihoods
-    
-    def backward(self, dvalues, y_true):
-        samples = len(dvalues)
-        # Number of labels in every sample
-        labels = len(dvalues[0])
-
-        if len(y_true.shape) == 1:
-            y_true = np.eye(labels)[y_true]
-
-        # Calculate gradient
-        self.dinputs = -y_true / dvalues
-        # Normalize gradient
-        self.dinputs = self.dinputs / samples
-
 class Loss_BinaryCrossentropy(Loss):
     def forward(self, y_pred, y_true):
 
@@ -187,78 +130,6 @@ class Loss_BinaryCrossentropy(Loss):
         # Normalize gradient
         self.dinputs = self.dinputs / samples
     
-class Activation_Softmax_Loss_CategoricalCrossentropy():
-    # Creates activation and loss function objects
-    def __init__(self):
-        self.activation = Activation_Softmax()
-        self.loss = Loss_CategoricalCrossentropy()
-    
-    # Forward pass
-    def forward(self, inputs, y_true):
-        # Output layer's activation function
-        self.activation.forward(inputs)
-        self.output = self.activation.output
-        # Calculate and return loss value
-        return self.loss.calculate(self.output, y_true)
-    
-    # Backward pass
-    def backward(self, dvalues, y_true):
-        samples = len(dvalues)
-    
-        # If labels are one-hot encoded, turn them into discrete values
-        if len(y_true.shape) == 2:
-            y_true = np.argmax(y_true, axis=1)
-
-        self.dinputs = dvalues.copy()
-        # Calculate gradient
-        self.dinputs[range(samples), y_true] -= 1
-        # Normalize
-        self.dinputs = self.dinputs / samples # now holds the gradient of the loss w.r.t. the logits of dense2
-
-class Optimizer_SGD: 
-    # Initialize with a default learning rate of 1
-    def __init__(self, learning_rate=1.0, decay=0, momentum=0):
-        self.learning_rate = learning_rate
-        self.current_learning_rate = learning_rate
-        self.decay = decay
-        self.iterations = 0
-        self.momentum = momentum
-
-    def pre_update_params(self):
-        if self.decay:
-            self.current_learning_rate = self.learning_rate * (1. / (1. + self.decay * self.iterations))
-    
-    def update_params(self, layer):
-        
-        # if momentum is used
-        if self.momentum: 
-
-            # If layer does not contain momentum arrays, create them filled with zeroes
-            if not hasattr(layer, 'weight_momentums'):
-                layer.weight_momentums = np.zeros_like(layer.weights)
-                # If there is no momentum array for weights, there none for biases
-                layer.bias_momentums = np.zeros_like(layer.biases)
-
-            # Build weight updates with momentum using previous update's direction to minimize chances of getting stuck at local min
-            # multiply by retain factor and update w/ current gradients
-            weight_updates = self.momentum * layer.weight_momentums - self.current_learning_rate * layer.dweights
-            layer.weight_momentums = weight_updates
-
-            # Build bias updates
-            bias_updates = self.momentum * layer.bias_momentums - self.current_learning_rate * layer.dbiases
-            layer.bias_momentums = bias_updates
-        # SGD updates (before momentum updates)
-        else:
-            weight_updates = -self.current_learning_rate * layer.dweights # W = W - learning rate * gradient of loss w.r.t. weights
-            bias_updates = -self.current_learning_rate * layer.dbiases # B = B - learning rate * gradient of loss w.r.t. biases
-
-        # Update weights and biases using momentum or vanilla
-        layer.weights += weight_updates
-        layer.biases += bias_updates
-    
-    def post_update_params(self):
-        self.iterations += 1
-
 class Optimizer_Adam:
 
     # Initialize optimizer
@@ -311,25 +182,6 @@ class Optimizer_Adam:
         
     def post_update_params(self):
         self.iterations += 1
-
-class Layer_Dropout:
-    def __init__(self, rate):
-        # Store rate, invert it
-        self.rate = 1 - rate
-    
-    def forward(self, inputs):
-        # Save input values
-        self.inputs = inputs
-        # Generate and save scaled mask
-        # Generates a random binary matrix with values 1 with probabily self.rate
-        # Scales the rest of the neurons' sum by dividing by self.rate
-        self.binary_mask = np.random.binomial(1, self.rate, size=inputs.shape) / self.rate
-        # Apply mask
-        self.output = inputs * self.binary_mask
-
-    def backward(self, dvalues):
-        # Gradient on values, same mask is applied
-        self.dinputs = dvalues * self.binary_mask
 
 
 X, y = spiral_data(samples=100, classes=2) # Create dataset in the 2D plane 
